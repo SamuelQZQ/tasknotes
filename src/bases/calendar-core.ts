@@ -473,15 +473,38 @@ export function createDueEvent(task: TaskInfo, plugin: TaskNotesPlugin): Calenda
 export function createScheduledToDueSpanEvent(task: TaskInfo, plugin: TaskNotesPlugin): CalendarEvent | null {
 	if (!task.scheduled || !task.due) return null;
 
-	// Parse dates to compare them
 	const scheduledDate = parseDateToLocal(task.scheduled);
 	const dueDate = parseDateToLocal(task.due);
+	const hasTime = hasTimeComponent(task.scheduled) || hasTimeComponent(task.due);
 
-	// Skip if due is before or same as scheduled (no span to show)
-	if (dueDate <= scheduledDate) return null;
+	if (hasTime) {
+		if (dueDate <= scheduledDate) return null;
+		const priorityConfig = plugin.priorityManager.getPriorityConfig(task.priority);
+		const borderColor = priorityConfig?.color || "var(--color-accent)";
+		const fadedBackground = hexToRgba(borderColor, 0.2);
+		const isCompleted = plugin.statusManager.isCompletedStatus(task.status);
+		const textColor = isCssVariable(borderColor) ? getEventTextColor(true) : borderColor;
 
-	// For FullCalendar, the end date for all-day events is exclusive,
-	// so we need to add one day to include the due date
+		return {
+			id: `span-${task.path}`,
+			title: task.title,
+			start: format(scheduledDate, "yyyy-MM-dd'T'HH:mm"),
+			end: format(dueDate, "yyyy-MM-dd'T'HH:mm"),
+			allDay: false,
+			backgroundColor: fadedBackground,
+			borderColor: borderColor,
+			textColor: textColor,
+			editable: true,
+			extendedProps: {
+				taskInfo: task,
+				eventType: "scheduledToDueSpan",
+				isCompleted: isCompleted,
+			},
+		};
+	}
+
+	if (dueDate < scheduledDate) return null;
+
 	const endDateExclusive = new Date(dueDate);
 	endDateExclusive.setDate(endDateExclusive.getDate() + 1);
 
@@ -989,15 +1012,18 @@ export async function generateCalendarEvents(
 					events.push(...recurringEvents);
 				}
 			} else {
-				// Handle non-recurring tasks with date range filtering
-				// Check if we should show a span event (replaces individual scheduled/due for this task)
+				// Handle non-recurring tasks with date range filtering.
+				// When a task has both scheduled and due, always prefer a single span event.
 				let showedSpan = false;
-				if (showScheduledToDueSpan && task.scheduled && task.due) {
+				const scheduledValue = task.scheduled;
+				const dueValue = task.due;
+				const shouldPreferSpan = !!scheduledValue && !!dueValue;
+
+				if (shouldPreferSpan) {
 					const spanEvent = createScheduledToDueSpanEvent(task, plugin);
 					if (spanEvent) {
-						// Check if span is in visible range (use scheduled date for range check)
-						if (isDateInVisibleRange(task.scheduled, visibleStart, visibleEnd) ||
-							isDateInVisibleRange(task.due, visibleStart, visibleEnd)) {
+						if (isDateInVisibleRange(scheduledValue, visibleStart, visibleEnd) ||
+							isDateInVisibleRange(dueValue, visibleStart, visibleEnd)) {
 							events.push(spanEvent);
 							showedSpan = true;
 						}
